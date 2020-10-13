@@ -73,3 +73,53 @@
     (and (->> question :tasks   (filter :duration) (every? task-is-assigned?))
          (->> question :members                    (every? member-works-one-task-per-day?))
          (->> question :tasks   (filter :duration) (every? predecessors-are-finished?)))))
+
+(defn calc-score
+  [question answer]
+  (letfn [(find-task [id]
+            (->> (filter #(= (:id %) id) (:tasks question))
+                 (first)))
+          (find-assign-by-task-id [task-id]
+            (->> (filter #(= (:task-id %) task-id) answer)
+                 (first)))
+          (find-assigns-by-member-id [member-id]
+            (filter #(= (:member-id %) member-id) answer))
+          (end-day []
+            (->> answer
+                 (map :end-day)
+                 (apply max)))
+          (block-to-one-member-count []
+            (letfn [(find-parent-task [task]
+                      (->> (filter #(contains? (set (:child-ids %)) (:id task)) (:tasks question))
+                           (first)))
+                    (find-child-tasks [task]
+                      (map find-task (:child-ids task)))
+                    (top-tasks []
+                      (filter (complement find-parent-task) (:tasks question)))
+                    (to-one-member-count [tasks]
+                      (if-let [s (seq tasks)]
+                        (+ (or (if-let [s (seq (filter :duration s))]
+                                 (if (->> s
+                                          (map :id)
+                                          (map find-assign-by-task-id)
+                                          ((juxt identity next))
+                                          (apply map #(= (:member-id %1) (:member-id %2)))
+                                          (every? identity))
+                                   1))
+                               0)
+                           (->> (map find-child-tasks tasks)
+                                (map to-one-member-count)
+                                (reduce + 0)))
+                        0))]
+              (to-one-member-count (top-tasks))))
+          (total-restraint-period []
+            (letfn [(restraint-period [member]
+                      (if-let [assigns (seq (find-assigns-by-member-id (:id member)))]
+                        (+ (- (apply max (map :end-day   assigns))
+                              (apply min (map :start-day assigns)))
+                           1)
+                        0))]
+              (->> (:members question)
+                   (map restraint-period)
+                   (reduce + 0))))]
+    [(end-day) (block-to-one-member-count) (total-restraint-period)]))
